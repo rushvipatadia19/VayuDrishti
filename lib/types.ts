@@ -101,3 +101,56 @@ export interface ApiErr {
   code?: string;
 }
 
+export type SourceType = 'official' | 'scientific' | 'technical' | 'journalism';
+
+export interface ResearchSource {
+  id: string; // e.g. "S1", "S2"
+  title: string;
+  url: string;
+  publisher: string;
+  domain: string;
+  publishedAt: string | null;
+  retrievedAt: string;
+  relevantExcerpt: string;
+  sourceType: SourceType;
+  verificationStatus: string;
+}
+
+export interface SimilarIncidentCase {
+  title: string;
+  location: string;
+  timePeriod: string;
+  pollutant: string;
+  conditions: string;
+  authorityInvolved: string;
+  documentedResponse: string;
+  reportedOutcome: string;
+  relevance: string;
+  limitations: string;
+  citationIds: string[];
+}
+
+export interface ActionPlanRecommendation {
+  priority: 'High' | 'Medium' | 'Low';
+  action: string;
+  why: string;
+  incidentEvidence: string;
+  historicalOrGuidanceEvidence: string;
+  citationIds: string[];
+  suggestedRole: string;
+  preconditionsAndLimitations: string;
+  verificationStep: string;
+}
+
+export interface IncidentResearch {
+  id: string;
+  incidentId: string;
+  summary: string;
+  similarIncidents: SimilarIncidentCase[];
+  recommendedActions: ActionPlanRecommendation[];
+  sources: ResearchSource[];
+  limitations: string[];
+  createdAt: string;
+}
+
+

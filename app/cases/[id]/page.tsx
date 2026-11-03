@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getIncident, getReadings } from '@/lib/db';
+import { getIncident, getReadings, getLatestResearch } from '@/lib/db';
 import { CaseView } from '@/components/case/CaseView';
 
 export default async function CasePage(props: {
@@ -22,12 +22,14 @@ export default async function CasePage(props: {
   }
 
   const readings = await getReadings(result.incident.stationId, result.incident.pollutant, 30);
+  const research = await getLatestResearch(id);
 
   return (
     <CaseView
       initialIncident={result.incident}
       initialEvents={result.events}
       initialAnalysis={result.analysis}
+      initialResearch={research}
       readings={readings}
     />
   );

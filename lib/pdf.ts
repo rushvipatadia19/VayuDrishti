@@ -1,16 +1,17 @@
 import { jsPDF } from 'jspdf';
-import { Incident, CaseEvent, Analysis, Reading } from '@/lib/types';
+import { Incident, CaseEvent, Analysis, Reading, IncidentResearch } from '@/lib/types';
 import { formatDateTime, formatDateOnly } from '@/lib/format';
 
 interface CasePdfData {
   incident: Incident;
   events: CaseEvent[];
   analysis: Analysis | null;
+  research?: IncidentResearch | null;
   readings: Reading[];
 }
 
 export async function generateCasePdf(data: CasePdfData): Promise<void> {
-  const { incident, events, analysis, readings } = data;
+  const { incident, events, analysis, research, readings } = data;
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -203,6 +204,124 @@ export async function generateCasePdf(data: CasePdfData): Promise<void> {
     doc.setTextColor(110, 110, 110);
     doc.text('No statutory analysis has been run on this incident yet.', margin, y);
     y += 8;
+  }
+
+  // INCIDENT-SPECIFIC WEB RESEARCH & HISTORICAL COMPARISONS
+  checkPageBreak(35);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(20, 60, 40);
+  doc.text('SIMILAR INCIDENTS, HISTORICAL EVIDENCE & PRECEDENTS', margin, y);
+  y += 5;
+
+  if (research) {
+    // Summary
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(60, 60, 60);
+    const sumLines = doc.splitTextToSize(`Research Synthesis (${formatDateTime(research.createdAt)}): ${research.summary}`, contentWidth);
+    doc.text(sumLines, margin, y);
+    y += sumLines.length * 4 + 4;
+
+    // Similar historical cases
+    if (research.similarIncidents.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 50, 35);
+      doc.text('Documented Similar Cases:', margin, y);
+      y += 4;
+
+      research.similarIncidents.forEach((c) => {
+        checkPageBreak(25);
+        doc.setFillColor(250, 252, 250);
+        doc.setDrawColor(215, 230, 220);
+        doc.roundedRect(margin, y, contentWidth, 20, 1.5, 1.5, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(20, 50, 30);
+        const citeStr = c.citationIds.length > 0 ? ` [${c.citationIds.join(', ')}]` : '';
+        doc.text(`${c.title}${citeStr}`, margin + 3, y + 4.5);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(80, 80, 80);
+        doc.text(`Location: ${c.location}  |  Period: ${c.timePeriod}  |  Authority: ${c.authorityInvolved}`, margin + 3, y + 8.5);
+
+        const respText = doc.splitTextToSize(`Response & Outcome: ${c.documentedResponse} - ${c.reportedOutcome}`, contentWidth - 6);
+        doc.text(respText.slice(0, 2), margin + 3, y + 12.5);
+
+        doc.setFont('helvetica', 'italic');
+        doc.text(`Limitations: ${c.limitations}`, margin + 3, y + 17.5);
+        y += 23;
+      });
+    } else {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(110, 110, 110);
+      doc.text('No sufficiently similar, well-supported historical incidents were found in this search.', margin, y);
+      y += 6;
+    }
+
+    // Recommended Action Plan
+    checkPageBreak(30);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(30, 50, 35);
+    doc.text('Evidence-Based Recommended Action Plan:', margin, y);
+    y += 5;
+
+    research.recommendedActions.forEach((act) => {
+      checkPageBreak(22);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(act.priority === 'High' ? 180 : 40, 50, 30);
+      const cStr = act.citationIds.length > 0 ? ` [${act.citationIds.join(', ')}]` : '';
+      doc.text(`[${act.priority.toUpperCase()} PRIORITY]  ${act.action}${cStr}`, margin, y);
+      y += 4;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(70, 70, 70);
+      const whyLines = doc.splitTextToSize(`Rationale & Evidence: ${act.why} (${act.incidentEvidence})`, contentWidth);
+      doc.text(whyLines, margin, y);
+      y += whyLines.length * 3.5 + 1;
+
+      doc.text(`Assigned Role: ${act.suggestedRole}  |  Verification Step: ${act.verificationStep}`, margin, y);
+      y += 5;
+    });
+
+    // Research Sources Index
+    if (research.sources.length > 0) {
+      checkPageBreak(30);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 50, 35);
+      doc.text('Verified Research Sources & Citation Index:', margin, y);
+      y += 4.5;
+
+      research.sources.forEach((s) => {
+        checkPageBreak(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(20, 60, 40);
+        doc.text(`[${s.id}] ${s.title} (${s.publisher} - ${s.sourceType.toUpperCase()})`, margin, y);
+        y += 3.5;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(0, 100, 180);
+        // Render clickable link in PDF
+        doc.textWithLink(s.url.slice(0, 85), margin, y, { url: s.url });
+        y += 4.5;
+      });
+    }
+  } else {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8.5);
+    doc.setTextColor(110, 110, 110);
+    doc.text('Web research has not been performed for this incident record.', margin, y);
+    y += 7;
   }
 
   // RECENT READINGS SUMMARY

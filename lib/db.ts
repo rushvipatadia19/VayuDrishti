@@ -8,6 +8,7 @@ import type {
   Pollutant,
   Station,
   StationSummary,
+  IncidentResearch,
 } from '@/lib/types';
 import { pm25ToAqi, pm10ToAqi } from '@/lib/aqi';
 import { createClient } from '@supabase/supabase-js';
@@ -71,6 +72,8 @@ declare global {
   var __vayu_memory_events: CaseEvent[] | undefined;
   // eslint-disable-next-line no-var
   var __vayu_memory_analyses: Analysis[] | undefined;
+  // eslint-disable-next-line no-var
+  var __vayu_memory_research: IncidentResearch[] | undefined;
 }
 
 if (!globalThis.__vayu_memory_incidents) {
@@ -82,10 +85,14 @@ if (!globalThis.__vayu_memory_events) {
 if (!globalThis.__vayu_memory_analyses) {
   globalThis.__vayu_memory_analyses = [];
 }
+if (!globalThis.__vayu_memory_research) {
+  globalThis.__vayu_memory_research = [];
+}
 
 const memoryIncidents: Incident[] = globalThis.__vayu_memory_incidents;
 const memoryEvents: CaseEvent[] = globalThis.__vayu_memory_events;
 const memoryAnalyses: Analysis[] = globalThis.__vayu_memory_analyses;
+const memoryResearch: IncidentResearch[] = globalThis.__vayu_memory_research;
 
 // Enforce transition rules
 export function isAllowedTransition(from: CaseStatus, to: CaseStatus): boolean {
@@ -577,3 +584,79 @@ export async function updateIncidentStatus(
 
   return existing.incident;
 }
+
+export async function getLatestResearch(incidentId: string): Promise<IncidentResearch | null> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('incident_research')
+        .select('*')
+        .eq('incident_id', incidentId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        return toCamel<IncidentResearch>(data);
+      }
+    } catch {
+      // Fallback to in-memory store
+    }
+  }
+
+  const match = memoryResearch
+    .filter((r) => r.incidentId === incidentId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+  return match || null;
+}
+
+export async function saveIncidentResearch(
+  incidentId: string,
+  researchData: Omit<IncidentResearch, 'id' | 'incidentId' | 'createdAt'> & { fingerprint?: string }
+): Promise<IncidentResearch> {
+  const now = new Date().toISOString();
+  const id = `res-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+  if (supabase) {
+    try {
+      const record = {
+        incident_id: incidentId,
+        summary: researchData.summary,
+        similar_incidents: researchData.similarIncidents,
+        recommended_actions: researchData.recommendedActions,
+        sources: researchData.sources,
+        limitations: researchData.limitations,
+        fingerprint: researchData.fingerprint || null,
+        created_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('incident_research')
+        .insert(record)
+        .select('*')
+        .single();
+
+      if (!error && data) {
+        return toCamel<IncidentResearch>(data);
+      }
+    } catch {
+      // Fallback to in-memory store
+    }
+  }
+
+  const newResearch: IncidentResearch = {
+    id,
+    incidentId,
+    summary: researchData.summary,
+    similarIncidents: researchData.similarIncidents,
+    recommendedActions: researchData.recommendedActions,
+    sources: researchData.sources,
+    limitations: researchData.limitations,
+    createdAt: now,
+  };
+
+  memoryResearch.unshift(newResearch);
+  return newResearch;
+}
+

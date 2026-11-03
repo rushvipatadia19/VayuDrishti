@@ -16,6 +16,11 @@ export const AnalyzeSchema = z.object({
   incidentId: z.string().min(1),
 });
 
+export const ResearchIncidentSchema = z.object({
+  forceRefresh: z.boolean().optional().default(false),
+});
+
+
 export const AddEventSchema = z.object({
   kind: z.literal('action'),
   text: z.string().min(1).max(500),

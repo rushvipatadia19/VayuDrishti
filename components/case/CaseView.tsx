@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Incident, CaseEvent, Analysis, Reading } from '@/lib/types';
+import { Incident, CaseEvent, Analysis, Reading, IncidentResearch } from '@/lib/types';
 import { CaseHeader } from './CaseHeader';
 import { InfoCards } from './InfoCards';
 import { CaseReadingsChart } from './CaseReadingsChart';
 import { AnalysisPanel } from './AnalysisPanel';
+import { IncidentResearchPanel } from './IncidentResearchPanel';
 import { ActionForm } from './ActionForm';
 import { Timeline } from './Timeline';
 import { generateCasePdf } from '@/lib/pdf';
@@ -17,6 +18,7 @@ interface CaseViewProps {
   initialIncident: Incident;
   initialEvents: CaseEvent[];
   initialAnalysis: Analysis | null;
+  initialResearch?: IncidentResearch | null;
   readings: Reading[];
 }
 
@@ -24,12 +26,14 @@ export function CaseView({
   initialIncident,
   initialEvents,
   initialAnalysis,
+  initialResearch = null,
   readings: initialReadings,
 }: CaseViewProps) {
   const { role } = useAuth();
   const [incident, setIncident] = useState<Incident>(initialIncident);
   const [events, setEvents] = useState<CaseEvent[]>(initialEvents);
   const [analysis, setAnalysis] = useState<Analysis | null>(initialAnalysis);
+  const [research, setResearch] = useState<IncidentResearch | null>(initialResearch);
   const [readings] = useState<Reading[]>(initialReadings);
   const [analyzing, setAnalyzing] = useState(false);
 
@@ -83,6 +87,7 @@ export function CaseView({
         incident,
         events,
         analysis,
+        research,
         readings,
       });
     } catch {
@@ -183,6 +188,13 @@ export function CaseView({
         analysis={analysis}
         onAnalyze={handleAnalyze}
         analyzing={analyzing}
+      />
+
+      {/* Incident-Specific Web Research, Historical Comparison & Evidence-Based Actions */}
+      <IncidentResearchPanel
+        incidentId={incident.id}
+        initialResearch={research}
+        onResearchCompleted={(newRes) => setResearch(newRes)}
       />
 
       {/* Corrective Action Form for Officers */}
