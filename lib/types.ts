@@ -1,0 +1,103 @@
+export type Pollutant = 'PM2.5' | 'PM10';
+export type CaseStatus = 'open' | 'under_review' | 'action_taken' | 'closed';
+
+export interface Station {
+  id: string;
+  name: string;
+  city: string;
+  state: string;
+  lat: number;
+  lng: number;
+}
+
+export interface StationSummary extends Station {
+  latestPm25: number | null;
+  latestPm10: number | null;
+  aqi: number | null;
+  aqiBucket: string | null; // CPCB bands: Good, Satisfactory, Moderate, Poor, Very Poor, Severe
+  measuredAt: string;
+}
+
+export interface Incident {
+  id: string;
+  title: string;
+  description: string;
+  pollutant: Pollutant;
+  reportedValue: number | null;
+  stationId: string;
+  locationName: string;
+  lat: number | null;
+  lng: number | null;
+  imageUrl: string | null;
+  status: CaseStatus;
+  createdAt: string;
+}
+
+export interface Reading {
+  id: string;
+  stationId: string;
+  pollutant: Pollutant;
+  value: number;
+  aqi: number | null;
+  aqiBucket: string | null;
+  measuredAt: string;
+}
+
+export interface ThresholdCheck {
+  limit: number;
+  unit: 'µg/m³';
+  averagingPeriod: string;
+  standard: string;
+  observed: number;
+  exceeded: boolean;
+  ratio: number; // observed / limit
+}
+
+export interface StandardRef {
+  name: string;
+  clause: string;
+  excerpt: string;
+}
+
+export interface Analysis {
+  id: string;
+  incidentId: string;
+  isAnomaly: boolean;
+  zScore: number;
+  forecast: { t: string; value: number }[];
+  threshold: ThresholdCheck;
+  standardRef: StandardRef;
+  currentAqi: number | null;
+  aqiBucket: string | null;
+  dataQuality: 'valid' | 'stale' | 'implausible' | 'missing';
+  unknowns: string[];
+  explanation: string;
+  nextStep: string;
+  cacheHit: boolean;
+  fallback: boolean;
+  createdAt: string;
+}
+
+export interface CaseEvent {
+  id: string;
+  incidentId: string;
+  kind: 'report' | 'analysis' | 'action' | 'status_change';
+  text: string;
+  imageUrl: string | null;
+  fromStatus: CaseStatus | null;
+  toStatus: CaseStatus | null;
+  createdAt: string;
+}
+
+export interface ApiOk<T> {
+  success: true;
+  data: T;
+  message?: string;
+}
+
+export interface ApiErr {
+  success: false;
+  error: string;
+  code?: string;
+}
+
