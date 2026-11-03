@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Incident, CaseEvent, Analysis, Reading } from '@/lib/types';
 import { CaseHeader } from './CaseHeader';
 import { InfoCards } from './InfoCards';
@@ -10,57 +10,31 @@ import { ActionForm } from './ActionForm';
 import { Timeline } from './Timeline';
 import { generateCasePdf } from '@/lib/pdf';
 import { Button } from '@/components/ui/Button';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { useAuth } from '@/lib/AuthContext';
 import { VayuAssistant } from '@/components/chat/VayuAssistant';
 
-export function CaseView({ incidentId }: { incidentId: string }) {
+interface CaseViewProps {
+  initialIncident: Incident;
+  initialEvents: CaseEvent[];
+  initialAnalysis: Analysis | null;
+  readings: Reading[];
+}
+
+export function CaseView({
+  initialIncident,
+  initialEvents,
+  initialAnalysis,
+  readings: initialReadings,
+}: CaseViewProps) {
   const { role } = useAuth();
-  const [incident, setIncident] = useState<Incident | null>(null);
-  const [events, setEvents] = useState<CaseEvent[]>([]);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [readings, setReadings] = useState<Reading[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [incident, setIncident] = useState<Incident>(initialIncident);
+  const [events, setEvents] = useState<CaseEvent[]>(initialEvents);
+  const [analysis, setAnalysis] = useState<Analysis | null>(initialAnalysis);
+  const [readings] = useState<Reading[]>(initialReadings);
   const [analyzing, setAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
-
-  async function fetchCaseData() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/incidents/${incidentId}`);
-      const json = await res.json();
-      if (!json.success || !json.data) {
-        throw new Error(json.error || 'Failed to load case');
-      }
-
-      const inc: Incident = json.data.incident;
-      setIncident(inc);
-      setEvents(json.data.events || []);
-      setAnalysis(json.data.analysis || null);
-
-      // Fetch readings for this station
-      if (inc.stationId) {
-        const rRes = await fetch(`/api/stations/${inc.stationId}/readings?pollutant=${inc.pollutant}&days=30`);
-        const rJson = await rRes.json();
-        if (rJson.success && Array.isArray(rJson.data)) {
-          setReadings(rJson.data);
-        }
-      }
-    } catch (err: unknown) {
-      setError((err as Error).message || 'Failed to load case data');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchCaseData();
-  }, [incidentId]);
 
   async function handleAnalyze() {
     if (!incident || analyzing) return;
@@ -76,8 +50,23 @@ export function CaseView({ incidentId }: { incidentId: string }) {
         throw new Error(json.error || 'Analysis failed');
       }
       setAnalysis(json.data);
-      // Refresh case to include newly added analysis event
-      fetchCaseData();
+
+      // Add analysis event to timeline
+      const now = new Date().toISOString();
+      const firstSentence = (json.data.explanation || '').split('.')[0] + '.';
+      setEvents((prev) => [
+        {
+          id: `ev-${Date.now()}`,
+          incidentId: incident.id,
+          kind: 'analysis',
+          text: firstSentence,
+          imageUrl: null,
+          fromStatus: null,
+          toStatus: null,
+          createdAt: now,
+        },
+        ...prev,
+      ]);
     } catch (err: unknown) {
       alert((err as Error).message);
     } finally {
@@ -101,20 +90,6 @@ export function CaseView({ incidentId }: { incidentId: string }) {
     } finally {
       setPdfGenerating(false);
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-36 w-full rounded-xl" />
-        <Skeleton className="h-64 w-full rounded-xl" />
-      </div>
-    );
-  }
-
-  if (error || !incident) {
-    return <ErrorBanner message={error || 'Incident case not found'} onRetry={fetchCaseData} />;
   }
 
   return (
@@ -200,7 +175,7 @@ export function CaseView({ incidentId }: { incidentId: string }) {
         limit={analysis?.threshold?.limit ?? (incident.pollutant === 'PM10' ? 100 : 60)}
         loading={false}
         error={null}
-        onRetry={fetchCaseData}
+        onRetry={() => {}}
       />
 
       {/* Explainable Statutory Analysis Panel */}
@@ -211,7 +186,10 @@ export function CaseView({ incidentId }: { incidentId: string }) {
       />
 
       {/* Corrective Action Form for Officers */}
-      <ActionForm incident={incident} onEventAdded={(ev) => setEvents([ev, ...events])} />
+      <ActionForm
+        incident={incident}
+        onEventAdded={(ev) => setEvents((prev) => [ev, ...prev])}
+      />
 
       {/* Complete Audit Trail Timeline */}
       <Timeline events={events} />

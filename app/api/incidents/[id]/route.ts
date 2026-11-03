@@ -1,8 +1,20 @@
 import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/response';
-import { updateIncidentStatus } from '@/lib/db';
+import { getIncident, updateIncidentStatus } from '@/lib/db';
 import { PatchIncidentSchema } from '@/lib/schemas';
 import { getAuthenticatedUser, isOfficerOrAdmin } from '@/lib/auth';
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const result = await getIncident(id);
+  if (!result) {
+    return fail('Not found', 404, 'NOT_FOUND');
+  }
+  return ok(result);
+}
 
 export async function PATCH(
   req: NextRequest,
