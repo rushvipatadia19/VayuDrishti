@@ -2,13 +2,13 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/lib/AuthContext';
+import { useAuth, UserRole } from '@/lib/AuthContext';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { signIn, signUp, role, user, signOut, loginAsOfficerDemo } = useAuth();
+  const { signIn, signUp, role, switchDemoRole, user, signOut } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +28,7 @@ export default function LoginPage() {
       if (res.error) {
         setError(res.error);
       } else {
-        setMessage('Registration successful! Please sign in.');
+        setMessage('Registration successful! Please sign in or check your email verification.');
         setIsSignUp(false);
       }
     } else {
@@ -40,11 +40,6 @@ export default function LoginPage() {
       }
     }
     setSubmitting(false);
-  }
-
-  function handleDemoOfficerLogin() {
-    loginAsOfficerDemo();
-    router.push('/');
   }
 
   return (
@@ -59,7 +54,7 @@ export default function LoginPage() {
           </h1>
           <p className="text-sm text-stone-600 mt-1">
             {user
-              ? `Signed in as ${user.email}`
+              ? `Signed in as ${user.email || 'Authenticated User'}`
               : 'Environmental Incident Reporting & Compliance Portal'}
           </p>
         </div>
@@ -76,52 +71,30 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Dedicated "Sign in as Officer (Demo)" button */}
-        {!user && (
-          <div className="mb-6 pb-6 border-b border-stone-200">
-            <button
-              type="button"
-              onClick={handleDemoOfficerLogin}
-              className="w-full py-3 px-4 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-semibold text-sm shadow-md transition-all flex items-center justify-center gap-2 group"
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 group-hover:animate-ping" />
-              <span>Sign in as Officer (Demo)</span>
-              <span className="text-emerald-200 text-xs font-normal">→ Instant Access</span>
-            </button>
-            <p className="text-[11px] text-stone-500 text-center mt-2">
-              For hackathon evaluation: Grants immediate Officer permissions without credentials.
-            </p>
-          </div>
-        )}
-
         {user ? (
           <div className="space-y-4">
             <div className="p-4 rounded-lg bg-stone-50 border border-stone-200">
               <div className="text-xs text-stone-500 uppercase font-mono">Current Active Role</div>
-              <div className="text-base font-semibold text-stone-900 mt-1 capitalize">
-                Officer — Demo Mode
-              </div>
+              <div className="text-base font-semibold text-stone-900 mt-1 capitalize">{role}</div>
               <div className="text-xs text-stone-600 mt-1">
-                Authorized to inspect cases, run statutory analysis, log corrective actions, and download reports.
+                {role === 'officer'
+                  ? 'Authorized to inspect cases, trigger statutory analysis, and log corrective actions.'
+                  : role === 'admin'
+                  ? 'Full administrative control over regulatory standards and case state.'
+                  : 'Resident access: submit reports, view public map, and consult Vayu Assistant.'}
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="primary"
-                className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white"
-                onClick={() => router.push('/')}
-              >
-                Go to Dashboard
-              </Button>
-              <Button
-                variant="secondary"
-                className="text-rose-600 hover:bg-rose-50 border border-stone-200"
-                onClick={signOut}
-              >
-                Sign Out
-              </Button>
-            </div>
+            <Button
+              variant="secondary"
+              className="w-full text-rose-600 hover:bg-rose-50 border border-stone-200"
+              onClick={async () => {
+                await signOut();
+                router.refresh();
+              }}
+            >
+              Sign Out
+            </Button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -132,7 +105,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="officer@cpcb.gov.in"
+                placeholder="officer@cpcb.gov.in or resident@domain.in"
                 className="w-full px-3 py-2 text-sm border border-stone-300 rounded focus:ring-1 focus:ring-emerald-600 focus:outline-none"
               />
             </div>
@@ -158,12 +131,8 @@ export default function LoginPage() {
               />
             </div>
 
-            <Button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold py-2.5"
-            >
-              {submitting ? 'Authenticating...' : isSignUp ? 'Register Account' : 'Sign In with Password'}
+            <Button type="submit" disabled={submitting} className="w-full bg-emerald-800 hover:bg-emerald-900 text-white">
+              {submitting ? 'Authenticating...' : isSignUp ? 'Register Account' : 'Sign In'}
             </Button>
 
             <div className="text-center pt-2">
@@ -181,7 +150,34 @@ export default function LoginPage() {
             </div>
           </form>
         )}
+
+        {/* Hackathon Quick Role Switcher for seamless judge testing */}
+        <div className="mt-8 pt-6 border-t border-stone-200">
+          <div className="text-xs font-semibold text-stone-600 mb-2 uppercase tracking-wider">
+            Hackathon Sprint Tester — Active Role
+          </div>
+          <p className="text-xs text-stone-500 mb-3">
+            Quickly switch the evaluation perspective to test server-enforced actions:
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {(['resident', 'officer', 'admin'] as UserRole[]).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => switchDemoRole(r)}
+                className={`py-1.5 px-2 text-xs font-medium rounded border text-center capitalize transition-colors ${
+                  role === r
+                    ? 'bg-emerald-800 text-white border-emerald-800'
+                    : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
       </Card>
     </div>
   );
 }
+

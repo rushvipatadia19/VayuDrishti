@@ -1,114 +1,129 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { createClient, User } from '@supabase/supabase-js';
 
-export type UserRole = 'resident' | 'officer';
+export type UserRole = 'resident' | 'officer' | 'admin';
 
 interface AuthContextType {
+  user: User | null;
   role: UserRole;
-  isOfficer: boolean;
-  user: { email: string } | null;
-  loginAsOfficerDemo: () => void;
+  loading: boolean;
+  accessToken: string | null;
   signIn: (email: string, pass: string) => Promise<{ error?: string }>;
   signUp: (email: string, pass: string) => Promise<{ error?: string }>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   switchDemoRole: (role: UserRole) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
-  role: 'officer',
-  isOfficer: true,
   user: null,
-  loginAsOfficerDemo: () => {},
+  role: 'resident',
+  loading: false,
+  accessToken: null,
   signIn: async () => ({}),
   signUp: async () => ({}),
-  signOut: () => {},
+  signOut: async () => {},
   switchDemoRole: () => {},
 });
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  '';
+
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [role, setRole] = useState<UserRole>('officer');
-  const [user, setUser] = useState<{ email: string } | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [role, setRole] = useState<UserRole>('officer'); // Default to officer for immediate hackathon judge access
+  const [loading, setLoading] = useState<boolean>(true);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // Persist demo officer session across browser refreshes
-    try {
-      const savedRole = localStorage.getItem('vayu_demo_role') as UserRole | null;
-      const savedUser = localStorage.getItem('vayu_demo_user');
-      if (savedRole) {
-        setRole(savedRole);
-      }
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
-      }
-    } catch {
-      // Ignore local storage error
+    if (!supabase) {
+      setLoading(false);
+      return;
     }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setUser(session.user);
+        setAccessToken(session.access_token);
+        fetchUserRole(session.user.id);
+      }
+      setLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setUser(session.user);
+        setAccessToken(session.access_token);
+        fetchUserRole(session.user.id);
+      } else {
+        setUser(null);
+        setAccessToken(null);
+        setRole('resident');
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  function loginAsOfficerDemo() {
-    setRole('officer');
-    const demoUser = { email: 'officer.demo@cpcb.gov.in' };
-    setUser(demoUser);
+  async function fetchUserRole(userId: string) {
+    if (!supabase) return;
     try {
-      localStorage.setItem('vayu_demo_role', 'officer');
-      localStorage.setItem('vayu_demo_user', JSON.stringify(demoUser));
+      const { data } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+      if (data?.role) {
+        setRole(data.role as UserRole);
+      }
     } catch {
-      // Ignore
+      // fallback
     }
   }
 
   async function signIn(email: string, pass: string) {
-    if (!email || !pass) {
-      return { error: 'Please enter both email and password.' };
-    }
-    // Authenticate user into Officer role for demo
-    setRole('officer');
-    const authedUser = { email };
-    setUser(authedUser);
-    try {
-      localStorage.setItem('vayu_demo_role', 'officer');
-      localStorage.setItem('vayu_demo_user', JSON.stringify(authedUser));
-    } catch {
-      // Ignore
-    }
+    if (!supabase) return { error: 'Supabase authentication not configured' };
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) return { error: error.message };
     return {};
   }
 
   async function signUp(email: string, pass: string) {
-    if (!email || !pass) {
-      return { error: 'Please provide valid credentials.' };
-    }
+    if (!supabase) return { error: 'Supabase authentication not configured' };
+    const { error } = await supabase.auth.signUp({ email, password: pass });
+    if (error) return { error: error.message };
     return {};
   }
 
-  function signOut() {
-    setUser(null);
-    setRole('resident');
-    try {
-      localStorage.removeItem('vayu_demo_role');
-      localStorage.removeItem('vayu_demo_user');
-    } catch {
-      // Ignore
+  async function signOut() {
+    if (supabase) {
+      await supabase.auth.signOut();
     }
+    setUser(null);
+    setAccessToken(null);
+    setRole('resident');
   }
 
   function switchDemoRole(newRole: UserRole) {
     setRole(newRole);
-    try {
-      localStorage.setItem('vayu_demo_role', newRole);
-    } catch {
-      // Ignore
-    }
   }
 
   return (
     <AuthContext.Provider
       value={{
-        role,
-        isOfficer: role === 'officer',
         user,
-        loginAsOfficerDemo,
+        role,
+        loading,
+        accessToken,
         signIn,
         signUp,
         signOut,
@@ -123,3 +138,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
   return useContext(AuthContext);
 }
+

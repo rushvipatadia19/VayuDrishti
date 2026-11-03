@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Incident } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/lib/AuthContext';
 
 interface ActionFormProps {
   incident: Incident;
@@ -11,11 +12,13 @@ interface ActionFormProps {
 }
 
 export function ActionForm({ incident, onEventAdded }: ActionFormProps) {
+  const { role } = useAuth();
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isClosed = incident.status === 'closed';
+  const isOfficerOrAdmin = role === 'officer' || role === 'admin';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,8 +71,14 @@ export function ActionForm({ incident, onEventAdded }: ActionFormProps) {
             Record site inspections, notices issued under Section 31A of Air Act 1981, or mitigation steps.
           </p>
         </div>
-        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-          Officer Mode Active
+        <span
+          className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${
+            isOfficerOrAdmin
+              ? 'bg-emerald-100 text-emerald-800'
+              : 'bg-amber-100 text-amber-800'
+          }`}
+        >
+          {isOfficerOrAdmin ? 'Authorized Officer Mode' : 'Resident View (Read Only)'}
         </span>
       </div>
 
@@ -79,27 +88,34 @@ export function ActionForm({ incident, onEventAdded }: ActionFormProps) {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <textarea
-          rows={2}
-          required
-          maxLength={500}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="e.g. Issued directive to regional industrial unit to inspect particulate scrubbing equipment and implement dust suppression within 24 hours."
-          className="w-full px-3 py-2 text-xs border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"
-        />
+      {isOfficerOrAdmin ? (
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <textarea
+            rows={2}
+            required
+            maxLength={500}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="e.g. Issued directive to regional cement batching plant to cover raw material hoppers and activate misting cannons within 24 hours."
+            className="w-full px-3 py-2 text-xs border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:ring-1 focus:ring-emerald-700"
+          />
 
-        <div className="flex justify-end">
-          <Button
-            type="submit"
-            disabled={submitting || !text.trim()}
-            className="bg-emerald-800 hover:bg-emerald-900 text-white text-xs px-4 py-2"
-          >
-            {submitting ? 'Recording Action...' : 'Record Corrective Action'}
-          </Button>
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              disabled={submitting || !text.trim()}
+              className="bg-emerald-800 hover:bg-emerald-900 text-white text-xs px-4 py-2"
+            >
+              {submitting ? 'Recording Action...' : 'Record Corrective Action'}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="p-3 bg-stone-50 rounded text-xs text-stone-600 border border-stone-200">
+          Only designated Pollution Control Officers or System Administrators can record statutory enforcement actions.
+          To test this capability, switch your active role to <span className="font-semibold text-emerald-800">Officer</span> in the header settings or login page.
         </div>
-      </form>
+      )}
     </Card>
   );
 }

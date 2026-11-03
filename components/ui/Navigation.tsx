@@ -49,38 +49,29 @@ export function Navigation() {
             <span>+</span> Report Incident
           </Link>
 
-          {/* User / Demo Role Badge & Login / Logout Links */}
-          <div className="flex items-center gap-2.5 pl-3 border-l border-emerald-900/60">
+          {/* User / Role Badge */}
+          <div className="flex items-center gap-2 pl-3 border-l border-emerald-900/60">
             <Link
               href="/login"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/80 border border-emerald-700/80 text-xs shadow-inner hover:border-emerald-500 transition"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-800/80 text-xs hover:border-emerald-600 transition"
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-emerald-100 font-semibold tracking-wide">
-                {role === 'officer' ? 'Officer — Demo Mode' : 'Resident View'}
-              </span>
-              {user && (
-                <span className="text-[10px] text-emerald-300 font-mono">
-                  ({user.email.split('@')[0]})
-                </span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-stone-300 capitalize">{role}</span>
+              {user ? (
+                <span className="text-[10px] text-emerald-300 font-mono">({user.email?.split('@')[0]})</span>
+              ) : (
+                <span className="text-[10px] text-emerald-400">Settings</span>
               )}
             </Link>
 
-            {user ? (
+            {user && (
               <button
                 type="button"
-                onClick={signOut}
-                className="text-xs text-stone-300 hover:text-white underline ml-1"
+                onClick={() => signOut()}
+                className="text-xs text-stone-400 hover:text-stone-200 underline ml-1"
               >
                 Sign out
               </button>
-            ) : (
-              <Link
-                href="/login"
-                className="text-xs text-emerald-300 hover:text-white underline ml-1"
-              >
-                Sign In
-              </Link>
             )}
           </div>
         </nav>
@@ -126,18 +117,13 @@ export function Navigation() {
           >
             + Report Incident
           </Link>
-          <div className="pt-2 border-t border-emerald-900 flex justify-between items-center text-xs">
-            <span className="text-emerald-200">
-              Role: <strong>{role === 'officer' ? 'Officer — Demo Mode' : 'Resident'}</strong>
-            </span>
-            <Link
-              href="/login"
-              onClick={() => setMobileMenuOpen(false)}
-              className="text-emerald-300 underline"
-            >
-              {user ? 'Settings / Sign out' : 'Sign In'}
-            </Link>
-          </div>
+          <Link
+            href="/login"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block text-xs text-stone-400 pt-2 border-t border-emerald-900"
+          >
+            Active Role: <span className="text-white capitalize">{role}</span> · Account Settings
+          </Link>
         </div>
       )}
 
@@ -148,3 +134,4 @@ export function Navigation() {
     </header>
   );
 }
+
