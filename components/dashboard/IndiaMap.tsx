@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { StationSummary } from '@/lib/types';
 import { NewsItem } from '@/app/api/news/route';
 import { getBand, AqiBucket } from '@/lib/aqi';
-import L from 'leaflet';
 
 const BAND_COLORS: Record<AqiBucket, string> = {
   Good: '#10b981',
@@ -29,47 +28,60 @@ export function IndiaMap({
   newsItems = [],
 }: IndiaMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const newsLayerRef = useRef<L.LayerGroup | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const markersLayerRef = useRef<any>(null);
+  const newsLayerRef = useRef<any>(null);
+  const leafletRef = useRef<any>(null);
 
   const [showStations, setShowStations] = useState(true);
   const [showNews, setShowNews] = useState(true);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  const [mapReady, setMapReady] = useState(false);
 
-  // Initialize Map
+  // Dynamically load Leaflet on the client only
   useEffect(() => {
-    if (!mapContainerRef.current) return;
-    if (mapInstanceRef.current) return;
+    let isMounted = true;
 
-    // Centered on central India
-    const map = L.map(mapContainerRef.current, {
-      center: [22.5, 78.9],
-      zoom: 5,
-      minZoom: 4,
-      maxZoom: 12,
-      scrollWheelZoom: true,
-    });
+    async function initMap() {
+      if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    // Clean OpenStreetMap tiles
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | VayuDrishti',
-      maxZoom: 18,
-    }).addTo(map);
+      const L = (await import('leaflet')).default;
+      leafletRef.current = L;
 
-    markersLayerRef.current = L.layerGroup().addTo(map);
-    newsLayerRef.current = L.layerGroup().addTo(map);
-    mapInstanceRef.current = map;
+      if (!isMounted || !mapContainerRef.current) return;
 
-    // Resize fix
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 250);
+      const map = L.map(mapContainerRef.current, {
+        center: [22.5, 78.9],
+        zoom: 5,
+        minZoom: 4,
+        maxZoom: 12,
+        scrollWheelZoom: true,
+      });
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | VayuDrishti',
+        maxZoom: 18,
+      }).addTo(map);
+
+      markersLayerRef.current = L.layerGroup().addTo(map);
+      newsLayerRef.current = L.layerGroup().addTo(map);
+      mapInstanceRef.current = map;
+      setMapReady(true);
+
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 250);
+    }
+
+    initMap();
 
     return () => {
-      map.remove();
-      mapInstanceRef.current = null;
+      isMounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
     };
   }, []);
 
@@ -77,7 +89,8 @@ export function IndiaMap({
   useEffect(() => {
     const map = mapInstanceRef.current;
     const markersLayer = markersLayerRef.current;
-    if (!map || !markersLayer) return;
+    const L = leafletRef.current;
+    if (!map || !markersLayer || !L || !mapReady) return;
 
     markersLayer.clearLayers();
     if (!showStations) return;
@@ -87,7 +100,6 @@ export function IndiaMap({
       const band = getBand(stn.aqi ?? 0);
       const bandColor = BAND_COLORS[band.label] || '#10b981';
 
-      // Circle marker with AQI color
       const marker = L.circleMarker([stn.lat, stn.lng], {
         radius: isSelected ? 12 : 8,
         fillColor: bandColor,
@@ -130,12 +142,13 @@ export function IndiaMap({
 
       markersLayer.addLayer(marker);
     });
-  }, [stations, selectedStationId, showStations, onSelectStation]);
+  }, [stations, selectedStationId, showStations, onSelectStation, mapReady]);
 
   // Update News Markers
   useEffect(() => {
     const newsLayer = newsLayerRef.current;
-    if (!newsLayer) return;
+    const L = leafletRef.current;
+    if (!newsLayer || !L || !mapReady) return;
 
     newsLayer.clearLayers();
     if (!showNews) return;
@@ -143,10 +156,9 @@ export function IndiaMap({
     newsItems
       .filter((item) => item.lat !== null && item.lng !== null)
       .forEach((item) => {
-        // News icon: Distinct diamond or badge marker
         const newsMarker = L.circleMarker([item.lat!, item.lng!], {
           radius: 7,
-          fillColor: '#0284c7', // Sky blue for government announcements
+          fillColor: '#0284c7',
           color: '#ffffff',
           weight: 2,
           opacity: 1,
@@ -176,7 +188,7 @@ export function IndiaMap({
         newsMarker.bindPopup(newsPopupHtml);
         newsLayer.addLayer(newsMarker);
       });
-  }, [newsItems, showNews]);
+  }, [newsItems, showNews, mapReady]);
 
   return (
     <div className="relative w-full h-[540px] rounded-xl overflow-hidden border border-stone-200 bg-[#f4f6f3] shadow-sm">
