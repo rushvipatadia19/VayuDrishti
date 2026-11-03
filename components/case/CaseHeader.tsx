@@ -82,3 +82,4 @@ export function CaseHeader({ incident }: { incident: Incident }) {
     </div>
   );
 }
+

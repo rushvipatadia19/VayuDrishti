@@ -8,3 +8,4 @@ export default async function CasePage({
   const { id } = await params;
   return <CaseView incidentId={id} />;
 }
+

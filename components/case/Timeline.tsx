@@ -82,3 +82,4 @@ export function Timeline({ events }: { events: CaseEvent[] }) {
     </Card>
   );
 }
+

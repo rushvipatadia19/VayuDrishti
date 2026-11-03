@@ -16,6 +16,8 @@ export function formatDate(isoString: string): string {
   }
 }
 
+export const formatDateTime = formatDate;
+
 export function formatDateShort(isoString: string): string {
   if (!isoString) return '';
   try {
@@ -30,7 +32,10 @@ export function formatDateShort(isoString: string): string {
   }
 }
 
+export const formatDateOnly = formatDateShort;
+
 export function formatNumber(val: number | null | undefined, decimals = 1): string {
   if (val === null || val === undefined || isNaN(val)) return '—';
   return val.toFixed(decimals);
 }
+

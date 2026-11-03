@@ -14,7 +14,10 @@ import { createClient } from '@supabase/supabase-js';
 
 // Server-only Supabase client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseAnonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  '';
 
 export const supabase = (supabaseUrl && supabaseAnonKey)
   ? createClient(supabaseUrl, supabaseAnonKey)
@@ -268,12 +271,16 @@ export interface CreateIncidentInput {
   reportedValue?: number | null;
   stationId: string;
   locationName: string;
+  lat?: number | null;
+  lng?: number | null;
   imageUrl?: string | null;
 }
 
 export async function createIncident(data: CreateIncidentInput): Promise<Incident> {
   const station = await getStation(data.stationId);
   const now = new Date().toISOString();
+  const latitude = data.lat !== undefined && data.lat !== null ? data.lat : (station?.lat || null);
+  const longitude = data.lng !== undefined && data.lng !== null ? data.lng : (station?.lng || null);
 
   if (supabase) {
     try {
@@ -284,8 +291,8 @@ export async function createIncident(data: CreateIncidentInput): Promise<Inciden
         reportedValue: data.reportedValue ?? null,
         stationId: data.stationId,
         locationName: data.locationName,
-        lat: station?.lat || null,
-        lng: station?.lng || null,
+        lat: latitude,
+        lng: longitude,
         imageUrl: data.imageUrl || null,
         status: 'open' as CaseStatus,
         createdAt: now,
@@ -330,8 +337,8 @@ export async function createIncident(data: CreateIncidentInput): Promise<Inciden
     reportedValue: data.reportedValue ?? null,
     stationId: data.stationId,
     locationName: data.locationName,
-    lat: station?.lat || null,
-    lng: station?.lng || null,
+    lat: latitude,
+    lng: longitude,
     imageUrl: data.imageUrl || null,
     status: 'open',
     createdAt: now,

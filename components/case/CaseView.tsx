@@ -1,145 +1,236 @@
 'use client';
-import { useState } from 'react';
-import { useApi } from '@/lib/useApi';
-import { api } from '@/lib/api';
-import type { Incident, CaseEvent, Analysis, Reading, CaseStatus } from '@/lib/types';
+
+import React, { useState, useEffect } from 'react';
+import { Incident, CaseEvent, Analysis, Reading } from '@/lib/types';
 import { CaseHeader } from './CaseHeader';
 import { InfoCards } from './InfoCards';
 import { CaseReadingsChart } from './CaseReadingsChart';
 import { AnalysisPanel } from './AnalysisPanel';
 import { ActionForm } from './ActionForm';
 import { Timeline } from './Timeline';
+import { generateCasePdf } from '@/lib/pdf';
+import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { useAuth } from '@/lib/AuthContext';
+import { VayuAssistant } from '@/components/chat/VayuAssistant';
 
 export function CaseView({ incidentId }: { incidentId: string }) {
-  // 1. Fetch incident, events and latest analysis
-  const {
-    data: caseData,
-    loading: caseLoading,
-    error: caseError,
-    refetch: refetchCase,
-  } = useApi<{
-    incident: Incident;
-    events: CaseEvent[];
-    analysis: Analysis | null;
-  }>(`/api/incidents/${incidentId}`);
-
-  // 2. Fetch 30-day baseline readings for the incident's station
-  const stationId = caseData?.incident.stationId;
-  const pollutant = caseData?.incident.pollutant ?? 'PM2.5';
-
-  const {
-    data: readings,
-    loading: readingsLoading,
-    error: readingsError,
-    refetch: refetchReadings,
-  } = useApi<Reading[]>(
-    stationId ? `/api/stations/${stationId}/readings?pollutant=${pollutant}&days=30` : ''
-  );
-
+  const { role } = useAuth();
+  const [incident, setIncident] = useState<Incident | null>(null);
+  const [events, setEvents] = useState<CaseEvent[]>([]);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [readings, setReadings] = useState<Reading[]>([]);
+  const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
-  const [activeAnalysis, setActiveAnalysis] = useState<Analysis | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Sync analysis from server or state
-  const currentAnalysis = activeAnalysis || caseData?.analysis || null;
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  async function fetchCaseData() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/incidents/${incidentId}`);
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        throw new Error(json.error || 'Failed to load case');
+      }
+
+      const inc: Incident = json.data.incident;
+      setIncident(inc);
+      setEvents(json.data.events || []);
+      setAnalysis(json.data.analysis || null);
+
+      // Fetch readings for this station
+      if (inc.stationId) {
+        const rRes = await fetch(`/api/stations/${inc.stationId}/readings?pollutant=${inc.pollutant}&days=30`);
+        const rJson = await rRes.json();
+        if (rJson.success && Array.isArray(rJson.data)) {
+          setReadings(rJson.data);
+        }
+      }
+    } catch (err: unknown) {
+      setError((err as Error).message || 'Failed to load case data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchCaseData();
+  }, [incidentId]);
 
   async function handleAnalyze() {
+    if (!incident || analyzing) return;
     setAnalyzing(true);
     try {
-      const res = await api<Analysis>('/api/analyze', {
+      const res = await fetch('/api/analyze', {
         method: 'POST',
-        body: JSON.stringify({ incidentId }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incidentId: incident.id }),
       });
-      setActiveAnalysis(res);
-      await refetchCase();
-    } catch {
-      // Error handled cleanly inside backend (explain fallback always succeeds)
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Analysis failed');
+      }
+      setAnalysis(json.data);
+      // Refresh case to include newly added analysis event
+      fetchCaseData();
+    } catch (err: unknown) {
+      alert((err as Error).message);
     } finally {
       setAnalyzing(false);
     }
   }
 
-  async function handleAddAction(text: string, imageUrl: string | null) {
-    await api<CaseEvent>(`/api/incidents/${incidentId}/events`, {
-      method: 'POST',
-      body: JSON.stringify({
-        kind: 'action',
-        text,
-        imageUrl: imageUrl || null,
-      }),
-    });
-    await refetchCase();
+  async function handleDownloadPdf() {
+    if (!incident) return;
+    setPdfGenerating(true);
+    setPdfError(null);
+    try {
+      await generateCasePdf({
+        incident,
+        events,
+        analysis,
+        readings,
+      });
+    } catch {
+      setPdfError('Failed to generate PDF report. Please verify image and network status.');
+    } finally {
+      setPdfGenerating(false);
+    }
   }
 
-  async function handleStatusChange(newStatus: CaseStatus, reason?: string) {
-    await api<Incident>(`/api/incidents/${incidentId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        status: newStatus,
-        reason,
-      }),
-    });
-    await refetchCase();
-  }
-
-  if (caseLoading) {
+  if (loading) {
     return (
       <div className="space-y-6">
-        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
         <Skeleton className="h-36 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
 
-  if (caseError || !caseData) {
-    return (
-      <div className="space-y-4">
-        <ErrorBanner message={caseError || 'Case not found'} onRetry={refetchCase} />
-      </div>
-    );
+  if (error || !incident) {
+    return <ErrorBanner message={error || 'Incident case not found'} onRetry={fetchCaseData} />;
   }
 
-  const { incident, events } = caseData;
-  const standardLimit = pollutant === 'PM2.5' ? 60 : 100;
-
   return (
-    <div className="space-y-8">
-      {/* 1. Header with Status Stepper */}
+    <div className="space-y-6">
+      {/* Top Action Bar with PDF Export */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
+        <div>
+          <div className="text-xs text-stone-500 font-mono">
+            CASE RECORD · ID: {incident.id}
+          </div>
+          <div className="text-sm font-semibold text-stone-800">
+            {incident.title}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          {pdfError && (
+            <span className="text-xs text-rose-600 font-medium">{pdfError}</span>
+          )}
+          <Button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={pdfGenerating}
+            className="w-full sm:w-auto bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold px-4 py-2 flex items-center justify-center gap-2 rounded-lg shadow-sm transition"
+          >
+            {pdfGenerating ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                <span>Generating Audit PDF...</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Download Complete Report (PDF)</span>
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Case Header & Workflow Progress Stepper */}
       <CaseHeader incident={incident} />
 
-      {/* 2. Four Infographic Cards */}
-      <InfoCards analysis={currentAnalysis} loading={analyzing} />
+      {/* 4 Infographic Cards */}
+      <InfoCards analysis={analysis} loading={analyzing} />
 
-      {/* 3. 30-Day Line Chart with Baseline & Forecast */}
+      {/* Evidence Photograph Banner (If attached) */}
+      {incident.imageUrl && (
+        <div className="p-4 bg-white border border-stone-200 rounded-xl flex flex-col md:flex-row gap-4 items-center">
+          <img
+            src={incident.imageUrl}
+            alt="Uploaded incident evidence"
+            className="w-full md:w-56 h-36 object-cover rounded-lg border border-stone-300 shadow-inner"
+          />
+          <div className="flex-1 text-xs space-y-1.5 text-stone-600">
+            <div className="font-semibold text-stone-900 text-sm">
+              Attached Incident Photographic Evidence
+            </div>
+            <div>
+              <span className="font-semibold">Observation Location:</span> {incident.locationName}
+              {incident.lat && incident.lng ? ` (${incident.lat.toFixed(4)}°N, ${incident.lng.toFixed(4)}°E)` : ''}
+            </div>
+            <div>
+              <span className="font-semibold">Reported Pollutant:</span> {incident.pollutant} (Observed value: {incident.reportedValue ?? 'Not specified'} µg/m³)
+            </div>
+            <div className="text-stone-400 text-[11px] pt-1">
+              Permanent evidence record · Preserved in case chain of custody and embedded into generated audit PDFs.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Historical Station Baseline & 3-Day Forecast Chart */}
       <CaseReadingsChart
         readings={readings}
-        forecast={currentAnalysis?.forecast}
-        pollutant={pollutant}
-        limit={standardLimit}
-        loading={readingsLoading}
-        error={readingsError}
-        onRetry={refetchReadings}
+        forecast={analysis?.forecast}
+        pollutant={incident.pollutant}
+        limit={analysis?.threshold?.limit ?? (incident.pollutant === 'PM10' ? 100 : 60)}
+        loading={false}
+        error={null}
+        onRetry={fetchCaseData}
       />
 
-      {/* 4. Analysis & Statutory Explanation Panel */}
+      {/* Explainable Statutory Analysis Panel */}
       <AnalysisPanel
-        analysis={currentAnalysis}
+        analysis={analysis}
         onAnalyze={handleAnalyze}
         analyzing={analyzing}
       />
 
-      {/* 5. Corrective Action Form & Advance Status */}
-      <ActionForm
-        incidentId={incident.id}
-        currentStatus={incident.status}
-        onActionAdded={handleAddAction}
-        onStatusChanged={handleStatusChange}
-      />
+      {/* Corrective Action Form for Officers */}
+      <ActionForm incident={incident} onEventAdded={(ev) => setEvents([ev, ...events])} />
 
-      {/* 6. Case History / Timeline */}
+      {/* Complete Audit Trail Timeline */}
       <Timeline events={events} />
+
+      {/* Context-aware assistant on case page */}
+      <VayuAssistant
+        caseContext={{
+          incidentId: incident.id,
+          title: incident.title,
+          pollutant: incident.pollutant,
+          reportedValue: incident.reportedValue,
+          stationName: incident.locationName,
+          status: incident.status,
+          isAnomaly: analysis?.isAnomaly,
+          standardLimit: analysis?.threshold?.limit,
+          exceeded: analysis?.threshold?.exceeded,
+          explanation: analysis?.explanation,
+        }}
+      />
     </div>
   );
 }

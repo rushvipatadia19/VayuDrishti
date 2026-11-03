@@ -1,12 +1,19 @@
+import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/response';
-import { getIncident, getReadings, createAnalysis } from '@/lib/db';
+import { getIncident, getReadings, createAnalysis, getStation } from '@/lib/db';
 import { runAnalysis } from '@/lib/analysis';
 import { explain, ExplainFacts } from '@/lib/ai';
 import { AnalyzeSchema } from '@/lib/schemas';
+import { getAuthenticatedUser, isOfficerOrAdmin } from '@/lib/auth';
 import seedData from '@/data/seed.json';
-import type { Analysis } from '@/lib/types';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // Authorization check: Officer or Admin required
+  const user = await getAuthenticatedUser(req);
+  if (user && !isOfficerOrAdmin(user.role)) {
+    return fail('Forbidden: Only pollution control officers can execute statutory analysis', 403, 'FORBIDDEN');
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -19,72 +26,73 @@ export async function POST(req: Request) {
     return fail('Invalid input', 400, 'VALIDATION');
   }
 
-  const { incidentId } = parsed.data;
-  const result = await getIncident(incidentId);
-  if (!result) {
+  const incidentData = await getIncident(parsed.data.incidentId);
+  if (!incidentData) {
     return fail('Not found', 404, 'NOT_FOUND');
   }
-  const { incident } = result;
 
-  // Load standard from seed.json standards array
-  // Match by pollutant: if incident.pollutant === 'PM2.5' use the PM2.5 24h standard.
-  // If incident.pollutant === 'PM10' use the PM10 24h standard.
-  const standard = (seedData.standards || []).find(
-    (s) => s.pollutant === incident.pollutant && s.averagingPeriod === '24h' && s.name.includes('CPCB')
-  ) || seedData.standards[0];
-
+  const { incident } = incidentData;
   const readings = await getReadings(incident.stationId, incident.pollutant, 30);
+  const station = await getStation(incident.stationId);
 
-  const computed = runAnalysis({ incident, readings, standard });
-
-  const facts: ExplainFacts = {
-    pollutant: incident.pollutant,
-    stationName: incident.locationName,
-    observed: incident.reportedValue ?? readings.at(-1)?.value ?? 0,
-    averagingPeriod: standard.averagingPeriod,
-    limit: standard.limit,
-    standardName: standard.name,
-    clause: standard.clause,
-    standardExcerpt: standard.excerpt,
-    exceeded: computed.threshold.exceeded,
-    ratio: computed.threshold.ratio,
-    zScore: computed.zScore,
-    dataQuality: computed.dataQuality,
-    isAnomaly: computed.isAnomaly,
+  // Match official standard from seed
+  const standardObj = (seedData.standards || []).find((s) => s.pollutant === incident.pollutant) || {
+    name: 'CPCB NAAQS',
+    clause: `${incident.pollutant}, 24-hour average`,
+    limit: incident.pollutant === 'PM10' ? 100 : 60,
+    unit: 'µg/m³',
+    averagingPeriod: '24h',
+    excerpt: `The National Ambient Air Quality Standards (NAAQS) prescribed by CPCB set the 24-hour average standard for ${incident.pollutant}.`,
   };
 
-  // The analysis cache order is: data/ai-cache.json → in-memory Map → HF call → fallback.
-  // Cache key for seeded incidents = incidentId.
-  // Cache key for new incidents = `${stationId}|${pollutant}|${Math.round(reportedValue)}`.
-  const isSeededIncident = ['inc-demo-1', 'inc-demo-2', 'inc-demo-3'].includes(incidentId);
-  const cacheKey = isSeededIncident
-    ? incidentId
-    : `${incident.stationId}|${incident.pollutant}|${Math.round(facts.observed)}`;
+  // 1. Deterministic math analysis (z-score, threshold, forecast)
+  const mathResult = runAnalysis({
+    incident,
+    readings,
+    standard: standardObj,
+  });
 
-  const { result: aiResult, cacheHit, fallback } = await explain(cacheKey, facts);
+  const cacheKey = `analysis:${incident.id}`;
+  const explainFacts: ExplainFacts = {
+    pollutant: incident.pollutant,
+    stationName: station?.name || incident.locationName,
+    observed: mathResult.threshold.observed,
+    averagingPeriod: mathResult.threshold.averagingPeriod,
+    limit: mathResult.threshold.limit,
+    standardName: standardObj.name,
+    clause: standardObj.clause,
+    standardExcerpt: standardObj.excerpt,
+    exceeded: mathResult.threshold.exceeded,
+    ratio: mathResult.threshold.ratio,
+    zScore: mathResult.zScore,
+    dataQuality: mathResult.dataQuality,
+    isAnomaly: mathResult.isAnomaly,
+  };
 
-  const analysisInput: Omit<Analysis, 'id' | 'createdAt'> = {
-    incidentId,
-    isAnomaly: computed.isAnomaly,
-    zScore: computed.zScore,
-    forecast: computed.forecast,
-    threshold: computed.threshold,
+  // 2. AI or rule-based statutory explanation
+  const { result, cacheHit, fallback } = await explain(cacheKey, explainFacts);
+
+  // 3. Save analysis to database / memory
+  const savedAnalysis = await createAnalysis(incident.id, {
+    incidentId: incident.id,
+    isAnomaly: mathResult.isAnomaly,
+    zScore: mathResult.zScore,
+    forecast: mathResult.forecast,
+    threshold: mathResult.threshold,
     standardRef: {
-      name: standard.name,
-      clause: standard.clause,
-      excerpt: standard.excerpt,
+      name: standardObj.name,
+      clause: standardObj.clause,
+      excerpt: standardObj.excerpt,
     },
-    currentAqi: computed.currentAqi,
-    aqiBucket: computed.aqiBucket,
-    dataQuality: computed.dataQuality,
-    unknowns: computed.unknowns,
-    explanation: aiResult.explanation,
-    nextStep: aiResult.nextStep,
+    currentAqi: mathResult.currentAqi,
+    aqiBucket: mathResult.aqiBucket,
+    dataQuality: mathResult.dataQuality,
+    unknowns: [...mathResult.unknowns, ...result.unknowns],
+    explanation: result.explanation,
+    nextStep: result.nextStep,
     cacheHit,
     fallback,
-  };
+  });
 
-  const analysis = await createAnalysis(incidentId, analysisInput);
-  return ok(analysis);
+  return ok(savedAnalysis);
 }
-

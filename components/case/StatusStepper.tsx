@@ -45,3 +45,4 @@ export function StatusStepper({ currentStatus }: { currentStatus: CaseStatus }) 
     </div>
   );
 }
+

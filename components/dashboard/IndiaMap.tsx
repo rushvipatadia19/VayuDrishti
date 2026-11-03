@@ -1,158 +1,291 @@
 'use client';
-import { useMemo } from 'react';
-import type { StationSummary } from '@/lib/types';
-import { AqiLegend } from './AqiLegend';
 
-const AQI_COLORS: Record<string, { fill: string; ring: string }> = {
-  Good: { fill: '#1a7a1a', ring: '#dcfce7' },
-  Satisfactory: { fill: '#4caf50', ring: '#dcfce7' },
-  Moderate: { fill: '#f59e0b', ring: '#fef3c7' },
-  Poor: { fill: '#f97316', ring: '#ffedd5' },
-  'Very Poor': { fill: '#ef4444', ring: '#fee2e2' },
-  Severe: { fill: '#7b0000', ring: '#fecaca' },
+import React, { useEffect, useRef, useState } from 'react';
+import { StationSummary } from '@/lib/types';
+import { NewsItem } from '@/app/api/news/route';
+import { getBand, AqiBucket } from '@/lib/aqi';
+import L from 'leaflet';
+
+const BAND_COLORS: Record<AqiBucket, string> = {
+  Good: '#10b981',
+  Satisfactory: '#84cc16',
+  Moderate: '#eab308',
+  Poor: '#f97316',
+  'Very Poor': '#ef4444',
+  Severe: '#7f1d1d',
 };
 
-// India geographic bounding box calibration:
-// Lat: ~8.0 to ~37.0 N
-// Lng: ~68.0 to ~97.0 E
-function projectCoords(lat: number, lng: number, width = 600, height = 660) {
-  const minLat = 8.0;
-  const maxLat = 36.5;
-  const minLng = 68.0;
-  const maxLng = 97.0;
-
-  const x = ((lng - minLng) / (maxLng - minLng)) * width;
-  // Invert Y axis for canvas coordinates
-  const y = height - ((lat - minLat) / (maxLat - minLat)) * height;
-
-  return { x: Math.round(x), y: Math.round(y) };
+interface IndiaMapProps {
+  stations: StationSummary[];
+  selectedStationId?: string | null;
+  onSelectStation: (stationId: string) => void;
+  newsItems?: NewsItem[];
 }
 
 export function IndiaMap({
   stations,
-  selectedStation,
-  onSelect,
-}: {
-  stations: StationSummary[];
-  selectedStation: StationSummary | null;
-  onSelect: (stn: StationSummary) => void;
-}) {
-  const projectedStations = useMemo(() => {
-    return stations.map((s) => ({
-      ...s,
-      ...projectCoords(s.lat, s.lng),
-    }));
-  }, [stations]);
+  selectedStationId,
+  onSelectStation,
+  newsItems = [],
+}: IndiaMapProps) {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const newsLayerRef = useRef<L.LayerGroup | null>(null);
+
+  const [showStations, setShowStations] = useState(true);
+  const [showNews, setShowNews] = useState(true);
+  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    if (mapInstanceRef.current) return;
+
+    // Centered on central India
+    const map = L.map(mapContainerRef.current, {
+      center: [22.5, 78.9],
+      zoom: 5,
+      minZoom: 4,
+      maxZoom: 12,
+      scrollWheelZoom: true,
+    });
+
+    // Clean OpenStreetMap tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | VayuDrishti',
+      maxZoom: 18,
+    }).addTo(map);
+
+    markersLayerRef.current = L.layerGroup().addTo(map);
+    newsLayerRef.current = L.layerGroup().addTo(map);
+    mapInstanceRef.current = map;
+
+    // Resize fix
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+
+    return () => {
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, []);
+
+  // Update Stations Markers
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const markersLayer = markersLayerRef.current;
+    if (!map || !markersLayer) return;
+
+    markersLayer.clearLayers();
+    if (!showStations) return;
+
+    stations.forEach((stn) => {
+      const isSelected = stn.id === selectedStationId;
+      const band = getBand(stn.aqi ?? 0);
+      const bandColor = BAND_COLORS[band.label] || '#10b981';
+
+      // Circle marker with AQI color
+      const marker = L.circleMarker([stn.lat, stn.lng], {
+        radius: isSelected ? 12 : 8,
+        fillColor: bandColor,
+        color: isSelected ? '#1c1917' : '#ffffff',
+        weight: isSelected ? 3 : 1.5,
+        opacity: 1,
+        fillOpacity: 0.88,
+      });
+
+      const popupHtml = `
+        <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4; min-width: 180px;">
+          <div style="font-weight: 700; font-size: 14px; color: #1c1917; margin-bottom: 2px;">
+            ${stn.name}
+          </div>
+          <div style="color: #78716c; font-size: 11px; margin-bottom: 6px;">
+            ${stn.city}, ${stn.state}
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <span style="background-color: ${bandColor}; color: #ffffff; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 11px;">
+              AQI ${stn.aqi ?? 'N/A'}
+            </span>
+            <span style="color: #44403c; font-weight: 600;">
+              ${stn.aqiBucket ?? 'Unknown'}
+            </span>
+          </div>
+          <div style="font-size: 11px; color: #57534e; border-top: 1px solid #e7e5e4; padding-top: 4px;">
+            <div>PM2.5: <b>${stn.latestPm25 ?? 'N/A'} µg/m³</b></div>
+            <div>PM10: <b>${stn.latestPm10 ?? 'N/A'} µg/m³</b></div>
+            <div style="color: #a8a29e; font-size: 10px; margin-top: 4px;">
+              Measured: ${new Date(stn.measuredAt).toLocaleDateString('en-IN')} (Historical baseline)
+            </div>
+          </div>
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml);
+      marker.on('click', () => {
+        onSelectStation(stn.id);
+      });
+
+      markersLayer.addLayer(marker);
+    });
+  }, [stations, selectedStationId, showStations, onSelectStation]);
+
+  // Update News Markers
+  useEffect(() => {
+    const newsLayer = newsLayerRef.current;
+    if (!newsLayer) return;
+
+    newsLayer.clearLayers();
+    if (!showNews) return;
+
+    newsItems
+      .filter((item) => item.lat !== null && item.lng !== null)
+      .forEach((item) => {
+        // News icon: Distinct diamond or badge marker
+        const newsMarker = L.circleMarker([item.lat!, item.lng!], {
+          radius: 7,
+          fillColor: '#0284c7', // Sky blue for government announcements
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9,
+        });
+
+        const newsPopupHtml = `
+          <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4; max-width: 220px;">
+            <span style="background-color: #0284c7; color: white; padding: 2px 5px; border-radius: 3px; font-size: 9px; font-weight: bold; text-transform: uppercase;">
+              Govt Notification
+            </span>
+            <div style="font-weight: 700; color: #0c4a6e; margin-top: 5px; font-size: 12px;">
+              ${item.title}
+            </div>
+            <div style="color: #64748b; font-size: 10px; margin-top: 3px;">
+              ${item.source} · ${new Date(item.publishedAt).toLocaleDateString('en-IN')}
+            </div>
+            <div style="font-size: 10px; color: #475569; margin-top: 5px; font-style: italic;">
+              ${item.isInferredLocation ? '📍 Approximate location inferred from announcement text' : ''}
+            </div>
+            <a href="${item.url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; margin-top: 6px; color: #0369a1; font-weight: 600; text-decoration: underline; font-size: 11px;">
+              Read Official PIB Release &rarr;
+            </a>
+          </div>
+        `;
+
+        newsMarker.bindPopup(newsPopupHtml);
+        newsLayer.addLayer(newsMarker);
+      });
+  }, [newsItems, showNews]);
 
   return (
-    <div className="flex flex-col space-y-3">
-      <div className="relative w-full h-[520px] rounded-xl bg-gray-50 border border-border overflow-hidden flex items-center justify-center p-4">
-        {/* Subtle decorative telemetry grid */}
-        <svg
-          className="absolute inset-0 w-full h-full opacity-20 pointer-events-none"
-          xmlns="http://www.w3.org/2000/svg"
+    <div className="relative w-full h-[540px] rounded-xl overflow-hidden border border-stone-200 bg-[#f4f6f3] shadow-sm">
+      {/* Controls Overlay */}
+      <div className="absolute top-3 right-3 z-[1000] flex flex-wrap gap-2 bg-white/95 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-stone-200 text-xs">
+        <label className="flex items-center gap-1.5 cursor-pointer font-medium text-stone-700">
+          <input
+            type="checkbox"
+            checked={showStations}
+            onChange={(e) => setShowStations(e.target.checked)}
+            className="rounded text-emerald-700 focus:ring-emerald-600"
+          />
+          Monitoring Stations ({stations.length})
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer font-medium text-sky-800">
+          <input
+            type="checkbox"
+            checked={showNews}
+            onChange={(e) => setShowNews(e.target.checked)}
+            className="rounded text-sky-700 focus:ring-sky-600"
+          />
+          PIB Govt News
+        </label>
+        <div className="h-4 w-[1px] bg-stone-300 mx-1 self-center" />
+        <button
+          type="button"
+          onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
+          className="text-stone-600 hover:text-stone-900 font-semibold underline"
         >
-          <defs>
-            <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
-              <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#6b7280" strokeWidth="0.5" strokeDasharray="2 4" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
-        </svg>
-
-        {/* Scaled SVG Canvas for India Subcontinent */}
-        <div className="relative w-full max-w-[560px] h-[480px]">
-          <svg viewBox="0 0 600 660" className="w-full h-full overflow-visible">
-            {/* India simplified outline silhouette */}
-            <path
-              d="M 270,30 L 320,35 L 340,70 L 360,90 L 320,120 L 325,150 L 370,165 L 410,170 L 450,195 L 510,200 L 570,190 L 590,215 L 560,240 L 510,235 L 460,260 L 430,290 L 400,310 L 380,370 L 370,440 L 350,490 L 320,560 L 290,630 L 275,650 L 270,630 L 240,560 L 210,490 L 190,430 L 175,370 L 160,340 L 120,310 L 100,290 L 125,260 L 160,260 L 190,240 L 210,180 L 230,150 L 240,90 Z"
-              fill="#e5e7eb"
-              stroke="#d1d5db"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-            {/* Crown */}
-            <path d="M 240,90 L 260,30 L 300,35 L 310,65 L 290,95 Z" fill="#f3f4f6" stroke="#d1d5db" strokeWidth="1" />
-            {/* Eastern Horn */}
-            <path d="M 460,220 L 560,210 L 590,230 L 550,250 L 490,240 Z" fill="#f3f4f6" stroke="#d1d5db" strokeWidth="1" />
-
-            {/* Station Pins */}
-            {projectedStations.map((stn) => {
-              const isSelected = selectedStation?.id === stn.id;
-              const colorInfo = stn.aqiBucket ? AQI_COLORS[stn.aqiBucket] || AQI_COLORS.Moderate : AQI_COLORS.Moderate;
-
-              return (
-                <g
-                  key={stn.id}
-                  className="cursor-pointer transition-transform duration-200"
-                  onClick={() => onSelect(stn)}
-                >
-                  {/* Selected Ripple Ring */}
-                  {isSelected && (
-                    <circle
-                      cx={stn.x}
-                      cy={stn.y}
-                      r="16"
-                      fill={colorInfo.fill}
-                      opacity="0.3"
-                      className="animate-ping"
-                    />
-                  )}
-
-                  {/* Outer circle */}
-                  <circle
-                    cx={stn.x}
-                    cy={stn.y}
-                    r={isSelected ? '9' : '6.5'}
-                    fill={colorInfo.fill}
-                    stroke="#ffffff"
-                    strokeWidth={isSelected ? '2.5' : '1.5'}
-                    className="drop-shadow-md hover:scale-125 transition-transform"
-                  />
-
-                  {/* Tooltip Label for Selected Node */}
-                  {isSelected && (
-                    <g transform={`translate(${stn.x + 12}, ${stn.y - 12})`}>
-                      <rect
-                        x="0"
-                        y="0"
-                        width="110"
-                        height="30"
-                        rx="6"
-                        fill="#1f2937"
-                        className="shadow-xl"
-                      />
-                      <circle cx="10" cy="15" r="4" fill={colorInfo.fill} />
-                      <text
-                        x="20"
-                        y="19"
-                        fill="#ffffff"
-                        fontSize="12"
-                        fontFamily="monospace"
-                        fontWeight="700"
-                      >
-                        {stn.city} · {stn.aqi ?? '—'}
-                      </text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* OpenStreetMap Notice bottom overlay */}
-        <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-[11px] font-mono text-gray-500 pointer-events-none">
-          <span className="bg-white/80 px-2 py-0.5 rounded shadow-xs">
-            {projectedStations.length} CPCB Monitored Cities
-          </span>
-          <span className="bg-white/80 px-2 py-0.5 rounded shadow-xs">
-            City coordinates © OpenStreetMap contributors
-          </span>
-        </div>
+          {viewMode === 'map' ? 'View as List' : 'View as Map'}
+        </button>
       </div>
 
-      <AqiLegend />
+      {/* Map View */}
+      <div
+        ref={mapContainerRef}
+        className={`w-full h-full ${viewMode === 'map' ? 'block' : 'hidden'}`}
+      />
+
+      {/* List Alternative View */}
+      {viewMode === 'list' && (
+        <div className="w-full h-full overflow-y-auto p-4 bg-white">
+          <div className="text-sm font-semibold text-stone-800 mb-3">
+            National Monitoring Stations Directory
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {stations.map((stn) => {
+              const band = getBand(stn.aqi ?? 0);
+              const bandColor = BAND_COLORS[band.label] || '#10b981';
+              return (
+                <div
+                  key={stn.id}
+                  onClick={() => {
+                    onSelectStation(stn.id);
+                    setViewMode('map');
+                  }}
+                  className={`p-2.5 rounded border text-left cursor-pointer transition-colors ${
+                    stn.id === selectedStationId
+                      ? 'border-emerald-700 bg-emerald-50/50'
+                      : 'border-stone-200 hover:border-stone-400 bg-stone-50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-semibold text-stone-900 text-xs">{stn.name}</div>
+                      <div className="text-[11px] text-stone-500">{stn.state}</div>
+                    </div>
+                    <span
+                      style={{ backgroundColor: bandColor }}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
+                    >
+                      AQI {stn.aqi ?? 'N/A'}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-stone-600">
+                    PM2.5: <b>{stn.latestPm25 ?? 'N/A'} µg/m³</b> · PM10: <b>{stn.latestPm10 ?? 'N/A'}</b>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Map Legend Overlay */}
+      <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 backdrop-blur px-3 py-2 rounded-lg shadow-sm border border-stone-200 text-[11px] text-stone-700 hidden sm:flex items-center gap-3">
+        <span className="font-semibold text-stone-800">AQI Bands:</span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#10b981]" /> Good (0-50)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#84cc16]" /> Satisfactory (51-100)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#eab308]" /> Moderate (101-200)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#f97316]" /> Poor (201-300)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444]" /> Very Poor (301-400)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#7f1d1d]" /> Severe (401+)
+        </span>
+        <span className="flex items-center gap-1 border-l border-stone-300 pl-2 text-sky-800">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#0284c7]" /> PIB News
+        </span>
+      </div>
     </div>
   );
 }

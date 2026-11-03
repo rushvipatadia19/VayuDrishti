@@ -1,13 +1,17 @@
 import { ok, fail } from '@/lib/response';
 import { listIncidents, createIncident, getStation } from '@/lib/db';
 import { CreateIncidentSchema } from '@/lib/schemas';
+import { getAuthenticatedUser } from '@/lib/auth';
+import { NextRequest } from 'next/server';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Public listing of incidents for community visibility
   const incidents = await listIncidents();
   return ok(incidents);
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // Optional auth: Residents, Officers, or Guests in demo mode can submit incidents
   let body: unknown;
   try {
     body = await req.json();
