@@ -93,21 +93,27 @@ export async function explain(
         const json = await res.json();
         const content = json.choices?.[0]?.message?.content ?? '';
         const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-
-        if (
-          typeof parsed.explanation === 'string' &&
-          typeof parsed.nextStep === 'string' &&
-          Array.isArray(parsed.unknowns)
-        ) {
-          const result: ExplainResult = {
-            explanation: parsed.explanation,
-            nextStep: parsed.nextStep,
-            unknowns: parsed.unknowns,
-          };
-          memory.set(key, result);
-          return { result, cacheHit: false, fallback: false };
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          throw new Error('bad json from model');
         }
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          'explanation' in parsed &&
+          'nextStep' in parsed &&
+          'unknowns' in parsed &&
+          typeof (parsed as Record<string, unknown>).explanation === 'string' &&
+          typeof (parsed as Record<string, unknown>).nextStep === 'string' &&
+          Array.isArray((parsed as Record<string, unknown>).unknowns)
+        ) {
+          const typedParsed = parsed as ExplainResult;
+          memory.set(key, typedParsed);
+          return { result: typedParsed, cacheHit: false, fallback: false };
+        }
+        throw new Error('model response missing required fields');
       }
     } catch {
       // Ignore error and fall through to fallback

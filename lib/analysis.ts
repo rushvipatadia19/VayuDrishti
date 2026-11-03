@@ -1,5 +1,5 @@
 import type { Incident, Reading, Pollutant, ThresholdCheck } from '@/lib/types';
-import { calculateAqiFromPm25 } from '@/lib/db';
+import { pm25ToAqi, pm10ToAqi } from '@/lib/aqi';
 
 export function zScore(latest: number, window: number[]): number {
   if (window.length === 0) return 0;
@@ -72,34 +72,18 @@ export function dataQuality(
   readings: Reading[],
   reportedValue: number | null
 ): 'valid' | 'stale' | 'implausible' | 'missing' {
-  if (reportedValue === null && readings.length === 0) {
-    return 'missing';
-  }
+  if (reportedValue === null && readings.length === 0) return 'missing';
+
+  const effectiveValue = reportedValue ?? readings.at(-1)?.value ?? 0;
+  if (effectiveValue > 1500) return 'implausible';
 
   const latestReading = readings.at(-1);
-  if (
-    (reportedValue !== null && reportedValue > 1500) ||
-    (latestReading && latestReading.value > 1500)
-  ) {
-    return 'implausible';
-  }
-
   if (latestReading) {
-    const readingTime = new Date(latestReading.measuredAt).getTime();
-    const nowTime = new Date().getTime();
-    // 48 hours in milliseconds
-    // Note: When evaluating against historical seed dates, we check if diff > 48h
-    // However, if the latest reading date is far in the past compared to system time,
-    // let's check standard rule: latest reading is more than 48 hours old.
-    // If it's more than 48 hours old from now:
-    const diffHours = (nowTime - readingTime) / (1000 * 60 * 60);
-    // If all historical demo data is 2019, strictly speaking diffHours > 48,
-    // but in demo contexts we check relative or strictly > 48h.
-    // Spec: "stale: latest reading is more than 48 hours old"
-    // Let's also check if readings exist and the difference is > 48h.
-    if (diffHours > 48 && reportedValue === null) {
-      return 'stale';
-    }
+    const ageHours =
+      (Date.now() - new Date(latestReading.measuredAt).getTime()) / 3_600_000;
+    // For historical seed data: if reportedValue is supplied, trust it as current.
+    // Only mark stale when there is NO reportedValue and readings are old.
+    if (reportedValue === null && ageHours > 48) return 'stale';
   }
 
   return 'valid';
@@ -161,7 +145,11 @@ export function runAnalysis(params: {
     unknowns.push('Instrument calibration at this station has not been verified');
   }
 
-  const { aqi, aqiBucket } = calculateAqiFromPm25(observed);
+  const aqiResult = incident.pollutant === 'PM10'
+    ? pm10ToAqi(observed)
+    : pm25ToAqi(observed);
+  const currentAqi = aqiResult.aqi;
+  const aqiBucket = aqiResult.aqiBucket;
 
   return {
     isAnomaly,
@@ -170,8 +158,7 @@ export function runAnalysis(params: {
     threshold,
     dataQuality: dq,
     unknowns,
-    currentAqi: aqi,
+    currentAqi,
     aqiBucket,
   };
 }
-

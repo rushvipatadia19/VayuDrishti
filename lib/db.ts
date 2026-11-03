@@ -9,6 +9,7 @@ import type {
   Station,
   StationSummary,
 } from '@/lib/types';
+import { pm25ToAqi, pm10ToAqi } from '@/lib/aqi';
 import { createClient } from '@supabase/supabase-js';
 
 // Server-only Supabase client
@@ -59,43 +60,6 @@ export function toSnake<T>(obj: unknown): T {
   return obj as T;
 }
 
-// CPCB AQI breakpoints:
-// 0–12        → 0–50    → Good
-// 12.1–35.4   → 51–100  → Satisfactory
-// 35.5–55.4   → 101–150 → Moderate
-// 55.5–150.4  → 151–250 → Poor
-// 150.5–250.4 → 251–350 → Very Poor
-// 250.5+      → 351–500 → Severe
-export function calculateAqiFromPm25(pm25: number | null): { aqi: number | null; aqiBucket: string | null } {
-  if (pm25 === null || isNaN(pm25)) {
-    return { aqi: null, aqiBucket: null };
-  }
-  let aqi: number;
-  let aqiBucket: string;
-
-  if (pm25 <= 12) {
-    aqi = Math.round((pm25 / 12) * 50);
-    aqiBucket = 'Good';
-  } else if (pm25 <= 35.4) {
-    aqi = Math.round(51 + ((pm25 - 12.1) / (35.4 - 12.1)) * (100 - 51));
-    aqiBucket = 'Satisfactory';
-  } else if (pm25 <= 55.4) {
-    aqi = Math.round(101 + ((pm25 - 35.5) / (55.4 - 35.5)) * (150 - 101));
-    aqiBucket = 'Moderate';
-  } else if (pm25 <= 150.4) {
-    aqi = Math.round(151 + ((pm25 - 55.5) / (150.4 - 55.5)) * (250 - 151));
-    aqiBucket = 'Poor';
-  } else if (pm25 <= 250.4) {
-    aqi = Math.round(251 + ((pm25 - 150.5) / (250.4 - 150.5)) * (350 - 251));
-    aqiBucket = 'Very Poor';
-  } else {
-    const capped = Math.min(pm25, 500);
-    aqi = Math.round(351 + ((capped - 250.5) / (500 - 250.5)) * (500 - 351));
-    aqiBucket = 'Severe';
-  }
-  return { aqi: Math.max(0, Math.min(500, aqi)), aqiBucket };
-}
-
 // In-memory fallback stores
 const memoryIncidents: Incident[] = (seedData.incidents || []).map((inc) => toCamel<Incident>(inc));
 const memoryEvents: CaseEvent[] = [];
@@ -119,35 +83,43 @@ export async function getStations(): Promise<StationSummary[]> {
 
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('readings')
-        .select('*')
-        .order('measured_at', { ascending: false });
-
-      if (!error && data && data.length > 0) {
-        isSupabaseAvailable = true;
-        const camelReadings = toCamel<Reading[]>(data);
-        return stations.map((stn) => {
-          const stnReadings = camelReadings.filter((r) => r.stationId === stn.id);
-          const latestPm25Reading = stnReadings.find((r) => r.pollutant === 'PM2.5');
-          const latestPm10Reading = stnReadings.find((r) => r.pollutant === 'PM10');
-          const latestPm25 = latestPm25Reading ? latestPm25Reading.value : null;
-          const latestPm10 = latestPm10Reading ? latestPm10Reading.value : null;
-          const { aqi, aqiBucket } = calculateAqiFromPm25(latestPm25);
-          const measuredAt = latestPm25Reading?.measuredAt || latestPm10Reading?.measuredAt || new Date().toISOString();
-
-          return {
-            ...stn,
-            latestPm25,
-            latestPm10,
-            aqi,
-            aqiBucket,
-            measuredAt,
-          };
-        });
-      }
+      isSupabaseAvailable = true;
+      const results = await Promise.all(
+        stations.map(async (stn) => {
+          const [pm25Res, pm10Res] = await Promise.all([
+            supabase!
+              .from('readings')
+              .select('value, measured_at')
+              .eq('station_id', stn.id)
+              .eq('pollutant', 'PM2.5')
+              .order('measured_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase!
+              .from('readings')
+              .select('value, measured_at')
+              .eq('station_id', stn.id)
+              .eq('pollutant', 'PM10')
+              .order('measured_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+          ]);
+          const latestPm25 = pm25Res.data?.value ?? null;
+          const latestPm10 = pm10Res.data?.value ?? null;
+          const { aqi, aqiBucket } = latestPm25 !== null
+            ? pm25ToAqi(latestPm25)
+            : { aqi: null, aqiBucket: null };
+          const measuredAt =
+            pm25Res.data?.measured_at ??
+            pm10Res.data?.measured_at ??
+            new Date().toISOString();
+          return { ...stn, latestPm25, latestPm10, aqi, aqiBucket, measuredAt };
+        })
+      );
+      return results;
     } catch {
-      // Supabase failed, continue to fallback
+      // fall through to seed fallback
+      isSupabaseAvailable = false;
     }
   }
 
@@ -161,7 +133,9 @@ export async function getStations(): Promise<StationSummary[]> {
     const latestPm10Reading = stnReadings.find((r) => r.pollutant === 'PM10');
     const latestPm25 = latestPm25Reading ? latestPm25Reading.value : null;
     const latestPm10 = latestPm10Reading ? latestPm10Reading.value : null;
-    const { aqi, aqiBucket } = calculateAqiFromPm25(latestPm25);
+    const { aqi, aqiBucket } = latestPm25 !== null
+      ? pm25ToAqi(latestPm25)
+      : { aqi: null, aqiBucket: null };
     const measuredAt = latestPm25Reading?.measuredAt || latestPm10Reading?.measuredAt || new Date().toISOString();
 
     return {
@@ -255,7 +229,7 @@ export async function getIncident(id: string): Promise<{
           .eq('incident_id', id)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         return {
           incident,
@@ -387,15 +361,25 @@ export async function createAnalysis(
 
   if (supabase) {
     try {
-      const insertData = toSnake<Record<string, unknown>>({
-        ...analysisInput,
-        incidentId,
-        createdAt: now,
-      });
-
       const { data: resData, error: resError } = await supabase
         .from('analyses')
-        .insert(insertData)
+        .insert({
+          incident_id: incidentId,
+          is_anomaly: analysisInput.isAnomaly,
+          z_score: analysisInput.zScore,
+          forecast: analysisInput.forecast, // JSONB — pass as-is
+          threshold: analysisInput.threshold, // JSONB — pass as-is
+          standard_ref: analysisInput.standardRef, // JSONB — pass as-is
+          current_aqi: analysisInput.currentAqi,
+          aqi_bucket: analysisInput.aqiBucket,
+          data_quality: analysisInput.dataQuality,
+          unknowns: analysisInput.unknowns, // JSONB — pass as-is
+          explanation: analysisInput.explanation,
+          next_step: analysisInput.nextStep,
+          cache_hit: analysisInput.cacheHit,
+          fallback: analysisInput.fallback,
+          created_at: now,
+        })
         .select()
         .single();
 
@@ -572,4 +556,3 @@ export async function updateIncidentStatus(
 
   return existing.incident;
 }
-
