@@ -108,11 +108,16 @@ export function ReportForm({ stations: initialStations }: ReportFormProps) {
       });
 
       const json = await res.json();
-      if (!res.ok || !json.success) {
+      if (!res.ok || !json.success || !json.data?.id) {
         throw new Error(json.error || 'Failed to submit incident');
       }
 
-      router.push(`/cases/${json.data.id}`);
+      const incidentId = String(json.data.id).trim();
+      if (!incidentId) {
+        throw new Error('Received invalid incident identifier from server');
+      }
+
+      router.push(`/cases/${encodeURIComponent(incidentId)}`);
     } catch (err: unknown) {
       setError((err as Error).message || 'Submission failed. Please check network.');
       setSubmitting(false);

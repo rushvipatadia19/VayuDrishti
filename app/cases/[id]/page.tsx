@@ -2,13 +2,20 @@ import { notFound } from 'next/navigation';
 import { getIncident, getReadings } from '@/lib/db';
 import { CaseView } from '@/components/case/CaseView';
 
-export default async function CasePage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
+export default async function CasePage(props: {
+  params: Promise<{ id: string }> | { id: string };
 }) {
-  const { id } = await params;
+  const resolvedParams = await props.params;
+  const id = resolvedParams?.id;
+  console.log(`[CasePage] Rendering case for id: "${id}"`);
+
+  if (!id) {
+    console.log('[CasePage] No id found in params, triggering notFound()');
+    notFound();
+  }
+
   const result = await getIncident(id);
+  console.log(`[CasePage] getIncident("${id}") returned:`, result ? 'FOUND' : 'NULL');
 
   if (!result) {
     notFound();

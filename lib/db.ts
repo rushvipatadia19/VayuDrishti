@@ -63,10 +63,29 @@ export function toSnake<T>(obj: unknown): T {
   return obj as T;
 }
 
-// In-memory fallback stores
-const memoryIncidents: Incident[] = (seedData.incidents || []).map((inc) => toCamel<Incident>(inc));
-const memoryEvents: CaseEvent[] = [];
-const memoryAnalyses: Analysis[] = [];
+// Persistent process-level store across Next.js dev bundles (Page SSR vs API Route Handler)
+declare global {
+  // eslint-disable-next-line no-var
+  var __vayu_memory_incidents: Incident[] | undefined;
+  // eslint-disable-next-line no-var
+  var __vayu_memory_events: CaseEvent[] | undefined;
+  // eslint-disable-next-line no-var
+  var __vayu_memory_analyses: Analysis[] | undefined;
+}
+
+if (!globalThis.__vayu_memory_incidents) {
+  globalThis.__vayu_memory_incidents = (seedData.incidents || []).map((inc) => toCamel<Incident>(inc));
+}
+if (!globalThis.__vayu_memory_events) {
+  globalThis.__vayu_memory_events = [];
+}
+if (!globalThis.__vayu_memory_analyses) {
+  globalThis.__vayu_memory_analyses = [];
+}
+
+const memoryIncidents: Incident[] = globalThis.__vayu_memory_incidents;
+const memoryEvents: CaseEvent[] = globalThis.__vayu_memory_events;
+const memoryAnalyses: Analysis[] = globalThis.__vayu_memory_analyses;
 
 // Enforce transition rules
 export function isAllowedTransition(from: CaseStatus, to: CaseStatus): boolean {
@@ -130,7 +149,6 @@ export async function getStations(): Promise<StationSummary[]> {
   const seedReadings = toCamel<Reading[]>(seedData.readings);
   return stations.map((stn) => {
     const stnReadings = seedReadings.filter((r) => r.stationId === stn.id);
-    // Sort newest first
     stnReadings.sort((a, b) => new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime());
     const latestPm25Reading = stnReadings.find((r) => r.pollutant === 'PM2.5');
     const latestPm10Reading = stnReadings.find((r) => r.pollutant === 'PM10');
@@ -163,9 +181,8 @@ export async function getReadings(stationId: string, pollutant: Pollutant, days:
         .order('measured_at', { ascending: false })
         .limit(days);
 
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         const camel = toCamel<Reading[]>(data);
-        // oldest first
         return camel.reverse();
       }
     } catch {
@@ -191,7 +208,7 @@ export async function listIncidents(): Promise<Incident[]> {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         return toCamel<Incident[]>(data);
       }
     } catch {
@@ -245,7 +262,7 @@ export async function getIncident(id: string): Promise<{
     }
   }
 
-  // Fallback
+  // Fallback to shared process memory
   const incident = memoryIncidents.find((i) => i.id === id);
   if (!incident) return null;
 
@@ -327,7 +344,7 @@ export async function createIncident(data: CreateIncidentInput): Promise<Inciden
     }
   }
 
-  // Fallback
+  // Consistent fallback ID stored in process-global memory
   const id = `inc-${Date.now()}`;
   const incident: Incident = {
     id,
@@ -374,13 +391,13 @@ export async function createAnalysis(
           incident_id: incidentId,
           is_anomaly: analysisInput.isAnomaly,
           z_score: analysisInput.zScore,
-          forecast: analysisInput.forecast, // JSONB — pass as-is
-          threshold: analysisInput.threshold, // JSONB — pass as-is
-          standard_ref: analysisInput.standardRef, // JSONB — pass as-is
+          forecast: analysisInput.forecast,
+          threshold: analysisInput.threshold,
+          standard_ref: analysisInput.standardRef,
           current_aqi: analysisInput.currentAqi,
           aqi_bucket: analysisInput.aqiBucket,
           data_quality: analysisInput.dataQuality,
-          unknowns: analysisInput.unknowns, // JSONB — pass as-is
+          unknowns: analysisInput.unknowns,
           explanation: analysisInput.explanation,
           next_step: analysisInput.nextStep,
           cache_hit: analysisInput.cacheHit,
@@ -393,7 +410,6 @@ export async function createAnalysis(
       if (!resError && resData) {
         const analysis = toCamel<Analysis>(resData);
 
-        // Case event text is first sentence of explanation
         const firstSentence = analysisInput.explanation.split('.')[0] + '.';
         await supabase.from('case_events').insert(
           toSnake<Record<string, unknown>>({
@@ -525,7 +541,6 @@ export async function updateIncidentStatus(
         .single();
 
       if (!error && data) {
-        // Log status change event
         await supabase.from('case_events').insert(
           toSnake<Record<string, unknown>>({
             incidentId: id,
@@ -544,7 +559,6 @@ export async function updateIncidentStatus(
       if ((e as Error)?.message === 'BAD_TRANSITION' || (e as Error)?.name === 'BAD_TRANSITION') {
         throw e;
       }
-      // Continue to fallback
     }
   }
 
