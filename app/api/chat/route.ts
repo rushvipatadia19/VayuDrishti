@@ -53,16 +53,58 @@ export async function POST(req: NextRequest) {
   const { messages, caseContext } = parsed.data;
   const userMsg = messages[messages.length - 1].content;
 
-  // Check if HF is available
-  const hfToken = process.env.HF_TOKEN;
-  const hfModel = process.env.HF_MODEL || 'openai/gpt-oss-120b';
-
   let contextSnippet = '';
   if (caseContext && caseContext.incidentId) {
     contextSnippet = `\n[Current Case Context]: Case ID: ${caseContext.incidentId}, Title: ${caseContext.title || 'N/A'}, Pollutant: ${caseContext.pollutant || 'N/A'}, Reported Value: ${caseContext.reportedValue ?? 'N/A'} µg/m³, Station: ${caseContext.stationName || 'N/A'}, Status: ${caseContext.status || 'open'}, Limit: ${caseContext.standardLimit ?? 60} µg/m³, Exceeded: ${caseContext.exceeded ? 'Yes' : 'No'}.`;
   }
 
-  if (hfToken) {
+  // 1. Primary: OpenRouter API
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const openRouterModel = process.env.OPENROUTER_MODEL || 'openrouter/free';
+
+  if (openRouterKey) {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/rushvipatadia19/VayuDrishti',
+          'X-Title': 'VayuDrishti Environmental Assistant',
+        },
+        body: JSON.stringify({
+          model: openRouterModel,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT + contextSnippet },
+            ...messages.map((m) => ({ role: m.role, content: m.content })),
+          ],
+          max_tokens: 600,
+          temperature: 0.3,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        let reply = json.choices?.[0]?.message?.content;
+        if (reply) {
+          // Some reasoning models wrap thought traces; clean if necessary
+          if (reply.includes('</think>')) {
+            reply = reply.split('</think>')[1].trim();
+          }
+          return ok({ message: reply, fallback: false });
+        }
+      }
+    } catch {
+      // Model error or timeout - fall through to fallback
+    }
+  }
+
+  // 2. Legacy HF fallback (if HF_TOKEN is configured and OpenRouter was not)
+  const hfToken = process.env.HF_TOKEN;
+  const hfModel = process.env.HF_MODEL || 'openai/gpt-oss-120b';
+
+  if (hfToken && !openRouterKey) {
     try {
       const response = await fetch(`https://router.huggingface.co/hf-inference/v1/chat/completions`, {
         method: 'POST',
@@ -90,11 +132,11 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch {
-      // Model error or timeout - fall through to intelligent rule-based answer
+      // Fall through to rule-based engine
     }
   }
 
-  // Graceful rule-based environmental knowledge engine
+  // 3. Graceful rule-based environmental knowledge engine
   const fallbackReply = generateRuleBasedResponse(userMsg, caseContext);
   return ok({ message: fallbackReply, fallback: true });
 }
@@ -145,4 +187,3 @@ function generateRuleBasedResponse(
 
   return 'I am Vayu Assistant. You can ask me about CPCB air quality standards, PM2.5/PM10 health thresholds, how statutory anomaly detection works, or the step-by-step incident response workflow.';
 }
-

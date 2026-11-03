@@ -71,8 +71,67 @@ export async function explain(
     return { result: memCache, cacheHit: true, fallback: false };
   }
 
-  // 3. Try HF call
-  if (process.env.HF_TOKEN) {
+  // 3. Try OpenRouter (Primary) or legacy Hugging Face
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const openRouterModel = process.env.OPENROUTER_MODEL || 'openrouter/free';
+
+  if (openRouterKey) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/rushvipatadia19/VayuDrishti',
+          'X-Title': 'VayuDrishti Environmental Intelligence',
+        },
+        body: JSON.stringify({
+          model: openRouterModel,
+          messages: [{ role: 'user', content: buildPrompt(facts) }],
+          temperature: 0.2,
+          max_tokens: 800,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        const content = json.choices?.[0]?.message?.content ?? '';
+        const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          // If model wrapped with additional text, attempt regex match
+          const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0]);
+          } else {
+            throw new Error('bad json from model');
+          }
+        }
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          'explanation' in parsed &&
+          'nextStep' in parsed &&
+          'unknowns' in parsed &&
+          typeof (parsed as Record<string, unknown>).explanation === 'string' &&
+          typeof (parsed as Record<string, unknown>).nextStep === 'string' &&
+          Array.isArray((parsed as Record<string, unknown>).unknowns)
+        ) {
+          const typedParsed = parsed as ExplainResult;
+          memory.set(key, typedParsed);
+          return { result: typedParsed, cacheHit: false, fallback: false };
+        }
+      }
+    } catch {
+      // Ignore error and fall through to fallback/legacy
+    }
+  }
+
+  // Optional legacy fallback to HF if configured and OpenRouter was not
+  if (process.env.HF_TOKEN && !openRouterKey) {
     try {
       const res = await fetch('https://router.huggingface.co/v1/chat/completions', {
         method: 'POST',
@@ -93,34 +152,24 @@ export async function explain(
         const json = await res.json();
         const content = json.choices?.[0]?.message?.content ?? '';
         const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(cleaned);
-        } catch {
-          throw new Error('bad json from model');
-        }
+        const parsed = JSON.parse(cleaned);
         if (
           parsed !== null &&
           typeof parsed === 'object' &&
           'explanation' in parsed &&
           'nextStep' in parsed &&
-          'unknowns' in parsed &&
-          typeof (parsed as Record<string, unknown>).explanation === 'string' &&
-          typeof (parsed as Record<string, unknown>).nextStep === 'string' &&
-          Array.isArray((parsed as Record<string, unknown>).unknowns)
+          'unknowns' in parsed
         ) {
           const typedParsed = parsed as ExplainResult;
           memory.set(key, typedParsed);
           return { result: typedParsed, cacheHit: false, fallback: false };
         }
-        throw new Error('model response missing required fields');
       }
     } catch {
-      // Ignore error and fall through to fallback
+      // fall through to deterministic fallback
     }
   }
 
-  // 4. Fallback
+  // 4. Deterministic Rule-Based Fallback
   return fallbackExplanation(facts);
 }
-
