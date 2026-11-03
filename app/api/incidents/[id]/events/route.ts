@@ -2,18 +2,11 @@ import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/response';
 import { createEvent } from '@/lib/db';
 import { AddEventSchema } from '@/lib/schemas';
-import { getAuthenticatedUser, isOfficerOrAdmin } from '@/lib/auth';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Authorization check: Officer or Admin required
-  const user = await getAuthenticatedUser(req);
-  if (user && !isOfficerOrAdmin(user.role)) {
-    return fail('Forbidden: Only authorized officers can log corrective actions', 403, 'FORBIDDEN');
-  }
-
   const { id } = await params;
   let body: unknown;
   try {

@@ -4,16 +4,9 @@ import { getIncident, getReadings, createAnalysis, getStation } from '@/lib/db';
 import { runAnalysis } from '@/lib/analysis';
 import { explain, ExplainFacts } from '@/lib/ai';
 import { AnalyzeSchema } from '@/lib/schemas';
-import { getAuthenticatedUser, isOfficerOrAdmin } from '@/lib/auth';
 import seedData from '@/data/seed.json';
 
 export async function POST(req: NextRequest) {
-  // Authorization check: Officer or Admin required
-  const user = await getAuthenticatedUser(req);
-  if (user && !isOfficerOrAdmin(user.role)) {
-    return fail('Forbidden: Only pollution control officers can execute statutory analysis', 403, 'FORBIDDEN');
-  }
-
   let body: unknown;
   try {
     body = await req.json();

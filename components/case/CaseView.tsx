@@ -10,7 +10,6 @@ import { ActionForm } from './ActionForm';
 import { Timeline } from './Timeline';
 import { generateCasePdf } from '@/lib/pdf';
 import { Button } from '@/components/ui/Button';
-import { useAuth } from '@/lib/AuthContext';
 import { VayuAssistant } from '@/components/chat/VayuAssistant';
 
 interface CaseViewProps {
@@ -26,7 +25,6 @@ export function CaseView({
   initialAnalysis,
   readings: initialReadings,
 }: CaseViewProps) {
-  const { role } = useAuth();
   const [incident, setIncident] = useState<Incident>(initialIncident);
   const [events, setEvents] = useState<CaseEvent[]>(initialEvents);
   const [analysis, setAnalysis] = useState<Analysis | null>(initialAnalysis);

@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/response';
 import { getIncident, updateIncidentStatus } from '@/lib/db';
 import { PatchIncidentSchema } from '@/lib/schemas';
-import { getAuthenticatedUser, isOfficerOrAdmin } from '@/lib/auth';
 
 export async function GET(
   req: NextRequest,
@@ -20,12 +19,6 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Authorization check: Officer or Admin required
-  const user = await getAuthenticatedUser(req);
-  if (user && !isOfficerOrAdmin(user.role)) {
-    return fail('Forbidden: Only authorized officers can change case status', 403, 'FORBIDDEN');
-  }
-
   const { id } = await params;
   let body: unknown;
   try {
