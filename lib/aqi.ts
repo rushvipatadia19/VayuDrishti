@@ -32,3 +32,4 @@ export function pm10ToAqi(pm10: number): { aqi: number; aqiBucket: AqiBucket } {
   if (pm10 <= 430)  return { aqi: Math.round(301 + ((pm10 - 351) / 79) * 99), aqiBucket: 'Very Poor' };
   return { aqi: Math.min(500, Math.round(401 + ((pm10 - 431) / 69) * 99)), aqiBucket: 'Severe' };
 }
+

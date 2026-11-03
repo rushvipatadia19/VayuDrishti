@@ -8,3 +8,4 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!json.success) throw new Error(json.error ?? 'Request failed');
   return json.data as T;
 }
+

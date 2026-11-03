@@ -22,3 +22,4 @@ export function useApi<T>(path: string) {
   useEffect(() => { load(); }, [load]);
   return { data, loading, error, refetch: load };
 }
+
